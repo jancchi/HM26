@@ -323,6 +323,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_vip_request_id
     redirectWithFilters($allowedCategories, $allowedStatuses);
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_offer_id'])) {
+    $offerId = (int) ($_POST['delete_offer_id'] ?? 0);
+    if ($offerId > 0) {
+        try {
+            $deleteOfferStmt = $pdo->prepare('DELETE FROM offers WHERE id = :id');
+            $deleteOfferStmt->execute([':id' => $offerId]);
+            $_SESSION['admin_notice'] = ['type' => 'success', 'text' => 'Community offer deleted.'];
+        } catch (Exception $e) {
+            $_SESSION['admin_notice'] = ['type' => 'error', 'text' => 'Could not delete offer.'];
+        }
+    }
+    header('Location: admin.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_done_request_id'])) {
+    $requestId = (int) ($_POST['delete_done_request_id'] ?? 0);
+    if ($requestId > 0) {
+        $requestStmt = $pdo->prepare('SELECT status FROM requests WHERE id = :id LIMIT 1');
+        $requestStmt->execute([':id' => $requestId]);
+        $request = $requestStmt->fetch();
+
+        if (!$request || !isResolvedStatus((string) ($request['status'] ?? ''))) {
+            $_SESSION['admin_notice'] = ['type' => 'error', 'text' => 'Only resolved tasks can be deleted.'];
+            redirectWithFilters($allowedCategories, $allowedStatuses);
+        }
+
+        $deleteRequestStmt = $pdo->prepare('DELETE FROM requests WHERE id = :id');
+        $deleteRequestStmt->execute([':id' => $requestId]);
+        $_SESSION['admin_notice'] = ['type' => 'success', 'text' => 'Done task deleted.'];
+    }
+    redirectWithFilters($allowedCategories, $allowedStatuses);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['worker_name'], $_POST['worker_username'], $_POST['worker_password'])) {
     $workerName = trim($_POST['worker_name']);
     $workerUsername = trim($_POST['worker_username']);
@@ -584,7 +618,7 @@ foreach ($workersByCategoryRows as $row) {
 }
 
 // <!-- MODIFIED: include fields required by compact table and AI panel -->
-$sql = 'SELECT r.id, r.full_name, r.email, r.organization, r.role, r.category, r.title, r.city, r.description, r.urgency,
+$sql = 'SELECT r.id, r.full_name, r.email, r.organization, r.role, r.category, r.title, r.city, r.description,
                r.status, r.created_at, r.is_vip, r.admin_note, r.rejection_note, r.assigned_worker_id, r.ai_matches,
                ' . $aiSelectSql . ',
                w.full_name AS worker_name
@@ -615,6 +649,14 @@ $displayedCount = count($requests);
 $clientsStmt = $pdo->prepare('SELECT id, full_name, email, is_vip FROM requests ORDER BY created_at DESC');
 $clientsStmt->execute();
 $clients = $clientsStmt->fetchAll();
+
+$offers = [];
+try {
+    $offersStmt = $pdo->query('SELECT id, full_name, organization, role, city, category FROM offers WHERE active = 1 ORDER BY created_at DESC');
+    $offers = $offersStmt->fetchAll();
+} catch (Exception $e) {
+    $offers = [];
+}
 
 $notice = $_SESSION['admin_notice'] ?? null;
 ?>
@@ -711,7 +753,6 @@ $notice = $_SESSION['admin_notice'] ?? null;
               <th>ID</th>
               <th>Name + Org</th>
               <th>Category</th>
-              <th>Priority</th>
               <th>Status</th>
               <th>Worker</th>
               <th>Matches</th>
@@ -720,44 +761,16 @@ $notice = $_SESSION['admin_notice'] ?? null;
           </thead>
           <tbody>
             <?php if (empty($requests)): ?>
-               <tr><td colspan="8" class="muted">No requests found for current filter view.</td></tr>
+               <tr><td colspan="7" class="muted">No requests found for current filter view.</td></tr>
             <?php else: ?>
               <?php foreach ($requests as $request): ?>
                 <?php $rowCategory = canonicalCategory((string) $request['category']); ?>
                 <?php $rowCategoryKey = normalizeCategoryKey($rowCategory); ?>
                 <?php
-                  $priorityClass = 'priority-none';
-                  $priorityLabel = '—';
-
                   $aiUrgencyRaw = $request['ai_urgency'];
                   $aiUrgency = null;
                   if ($aiUrgencyRaw !== null && $aiUrgencyRaw !== '' && is_numeric((string) $aiUrgencyRaw)) {
                       $aiUrgency = (int) $aiUrgencyRaw;
-                  }
-
-                  $priorityScore = $aiUrgency;
-                  if ($priorityScore === null) {
-                      $urgencyFallback = strtolower(trim((string) ($request['urgency'] ?? '')));
-                      if ($urgencyFallback === 'high') {
-                          $priorityScore = 9;
-                      } elseif ($urgencyFallback === 'medium') {
-                          $priorityScore = 6;
-                      } elseif ($urgencyFallback === 'low') {
-                          $priorityScore = 3;
-                      }
-                  }
-
-                  if ($priorityScore !== null) {
-                      if ($priorityScore >= 8 && $priorityScore <= 10) {
-                          $priorityClass = 'priority-high';
-                          $priorityLabel = 'HIGH';
-                      } elseif ($priorityScore >= 5 && $priorityScore <= 7) {
-                          $priorityClass = 'priority-med';
-                          $priorityLabel = 'MED';
-                      } elseif ($priorityScore >= 1 && $priorityScore <= 4) {
-                          $priorityClass = 'priority-low';
-                          $priorityLabel = 'LOW';
-                      }
                   }
 
                   $aiCategoryValue = trim((string) ($request['ai_category'] ?? ''));
@@ -776,7 +789,6 @@ $notice = $_SESSION['admin_notice'] ?? null;
                     </div>
                   </td>
                   <td><?php echo h($rowCategory); ?></td>
-                  <td><span class="priority-badge <?php echo $priorityClass; ?>"><?php echo h($priorityLabel); ?></span></td>
                   <td><span class="badge <?php echo statusClass($request['status']); ?>"><?php echo h($request['status']); ?></span></td>
                   <td>
                     <?php if (!empty($request['worker_name'])): ?>
@@ -809,11 +821,20 @@ $notice = $_SESSION['admin_notice'] ?? null;
                         <input type="hidden" name="toggle_vip_value" value="<?php echo (int) $request['is_vip'] === 1 ? '0' : '1'; ?>">
                         <button type="submit" class="icon-btn <?php echo (int) $request['is_vip'] === 1 ? 'icon-vip-on' : 'icon-vip-off'; ?>" title="Toggle VIP">★</button>
                       </form>
+                      <?php if (isResolvedStatus((string) $request['status'])): ?>
+                      <form method="POST" action="admin.php" class="inline-icon-form" onsubmit="return confirm('Delete this done task permanently?');">
+                        <input type="hidden" name="delete_done_request_id" value="<?php echo (int) $request['id']; ?>">
+                        <input type="hidden" name="current_category" value="<?php echo h($categoryFilter); ?>">
+                        <input type="hidden" name="current_status" value="<?php echo h($statusFilter); ?>">
+                        <input type="hidden" name="current_unassigned" value="<?php echo h($unassignedFilter); ?>">
+                        <button type="submit" class="icon-btn" title="Delete done task">🗑</button>
+                      </form>
+                      <?php endif; ?>
                     </div>
                   </td>
                 </tr>
                 <tr id="<?php echo h($detailsId); ?>" class="request-detail-row" hidden>
-                  <td colspan="8">
+                  <td colspan="7">
                     <!-- MODIFIED: expanded detail row with notes, AI panel, forms and created-at -->
                     <div class="request-detail-panel">
                       <div class="detail-meta-row">
@@ -971,6 +992,29 @@ $notice = $_SESSION['admin_notice'] ?? null;
             </div>
           <?php endforeach; ?>
         </div>
+      </div>
+
+      <div class="panel">
+        <div class="meta-label muted">Community Offers</div>
+        <?php if (empty($offers)): ?>
+          <p class="muted section">No active offers found.</p>
+        <?php else: ?>
+          <div class="list">
+            <?php foreach ($offers as $offer): ?>
+              <div class="list-item">
+                <div><strong><?php echo h((string) ($offer['full_name'] ?? '')); ?></strong></div>
+                <div class="muted"><?php echo h((string) ($offer['role'] ?? '')); ?></div>
+                <div class="muted"><?php echo h((string) ($offer['organization'] ?? '')); ?></div>
+                <div class="muted">City: <?php echo h((string) ($offer['city'] ?? '')); ?></div>
+                <div class="muted">Category: <?php echo h((string) ($offer['category'] ?? '')); ?></div>
+                <form method="POST" action="admin.php" class="inline-row section" onsubmit="return confirm('Delete this community offer?');">
+                  <input type="hidden" name="delete_offer_id" value="<?php echo (int) $offer['id']; ?>">
+                  <button type="submit" class="btn btn-danger">Delete Offer</button>
+                </form>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
       </div>
     </div>
 

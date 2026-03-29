@@ -97,8 +97,8 @@
   }
 
   const roleButtons = Array.from(document.querySelectorAll('.role-button'))
+  const roleGroup = document.querySelector('.role-group')
   const categoryButtons = Array.from(document.querySelectorAll('.category-card'))
-  const urgencyRadios = Array.from(document.querySelectorAll('input[name="urgency"]'))
   const helpTypeRadios = Array.from(document.querySelectorAll('input[name="help_type"]'))
   const reviewEditButtons = Array.from(document.querySelectorAll('.review-edit'))
 
@@ -107,12 +107,6 @@
     Investor: 'Investor',
     'Service Provider': 'Service Provider',
     'Community Member': 'Community Member',
-  }
-
-  const urgencyLabelMap = {
-    low: 'Low - not urgent',
-    medium: 'Medium - within a few weeks',
-    high: 'High - as soon as possible',
   }
 
   const helpTypeLabelMap = {
@@ -276,7 +270,7 @@
       : '-'
 
     const detailsHtml = [
-      renderReviewRow('Urgency:', escapeHtml(urgencyLabelMap[state.data.urgency] || '-')),
+      renderReviewRow('Urgency:', 'Medium - standard priority'),
       state.data.deadline ? renderReviewRow('Deadline:', escapeHtml(formatDate(state.data.deadline))) : '',
       state.data.budget ? renderReviewRow('Budget:', `${escapeHtml(state.data.budget)} EUR`) : '',
       renderReviewRow('Support Type:', escapeHtml(helpTypeLabelMap[state.data.helpType] || '-')),
@@ -301,6 +295,13 @@
       button.classList.toggle('is-active', isActive)
       button.setAttribute('aria-checked', isActive ? 'true' : 'false')
     })
+  }
+
+  function selectRole(role) {
+    if (!role) return
+    state.data.role = role
+    clearError('role')
+    renderRoleButtons()
   }
 
   function renderCategoryButtons() {
@@ -329,8 +330,7 @@
     state.data.deadline = elements.deadline ? elements.deadline.value : ''
     state.data.budget = elements.budget ? elements.budget.value.trim() : ''
 
-    const urgency = urgencyRadios.find((radio) => radio.checked)
-    state.data.urgency = urgency ? urgency.value : 'medium'
+    state.data.urgency = 'medium'
 
     const helpType = helpTypeRadios.find((radio) => radio.checked)
     state.data.helpType = helpType ? helpType.value : 'volunteer'
@@ -513,12 +513,30 @@
     }
 
     roleButtons.forEach((button) => {
+      if (button.getAttribute('type') !== 'button') {
+        button.setAttribute('type', 'button')
+      }
+
       button.addEventListener('click', () => {
-        state.data.role = button.getAttribute('data-role') || ''
-        clearError('role')
-        renderRoleButtons()
+        selectRole(button.getAttribute('data-role') || '')
+      })
+
+      button.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        selectRole(button.getAttribute('data-role') || '')
       })
     })
+
+    if (roleGroup) {
+      roleGroup.addEventListener('pointerup', (event) => {
+        const target = event.target
+        if (!(target instanceof HTMLElement)) return
+        const button = target.closest('.role-button')
+        if (!(button instanceof HTMLElement)) return
+        selectRole(button.getAttribute('data-role') || '')
+      })
+    }
 
     categoryButtons.forEach((button) => {
       button.addEventListener('click', () => {

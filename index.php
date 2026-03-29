@@ -30,11 +30,11 @@ $categories = [
       <div class="header-container">
         <a href="index.php" class="logo text-display text-caps">0100 Community Help</a>
 
-        <nav class="desktop-nav text-caps" aria-label="Desktop Navigation">
+        <nav class="desktop-nav" aria-label="Desktop Navigation">
           <a href="index.php">Home</a>
-          <a href="index.php#">About</a>
-          <a href="index.php">Requests</a>
-          <a href="index.php#">Contact</a>
+          <a href="index.php">Submit Request</a>
+          <a href="offers.php">Community Offers</a>
+          <a href="admin.php">Admin</a>
         </nav>
 
         <button class="mobile-toggle" id="nav-toggle" aria-expanded="false" aria-label="Toggle navigation">
@@ -44,12 +44,12 @@ $categories = [
         </button>
       </div>
 
-      <div class="mobile-nav-panel text-caps" id="mobile-nav-panel">
+      <div class="mobile-nav-panel" id="mobile-nav-panel">
         <nav class="mobile-nav" aria-label="Mobile Navigation">
           <a href="index.php">Home</a>
-          <a href="index.php#">About</a>
-          <a href="index.php">Requests</a>
-          <a href="index.php#">Contact</a>
+          <a href="index.php">Submit Request</a>
+          <a href="offers.php">Community Offers</a>
+          <a href="admin.php">Admin</a>
         </nav>
       </div>
     </header>
@@ -76,8 +76,8 @@ $categories = [
           <aside class="form-left-panel">
             <div class="panel-edge-blob" aria-hidden="true"></div>
             <div class="left-content-top">
-              <h1 class="left-title">Share your request with the community.</h1>
-              <p class="left-subtitle">Your request will be captured for the 0100 ecosystem. Please provide accurate details for faster routing.</p>
+              <h1 class="left-title">Need support from the 0100 community?</h1>
+              <p class="left-subtitle">Share your request in a clear way. We will route it to the most relevant people from the ecosystem.</p>
             </div>
 
             <div class="left-content-bottom">
@@ -205,13 +205,6 @@ $categories = [
                     <p class="step-subtitle">Add context so we can route your request faster.</p>
                   </div>
 
-                  <fieldset class="radio-group">
-                    <legend class="field-label">Urgency *</legend>
-                    <label class="radio-row"><input type="radio" name="urgency" value="low"> <span>Low - not urgent</span></label>
-                    <label class="radio-row"><input type="radio" name="urgency" value="medium" checked> <span>Medium - within a few weeks</span></label>
-                    <label class="radio-row"><input type="radio" name="urgency" value="high"> <span>High - as soon as possible</span></label>
-                  </fieldset>
-
                   <div class="input-group">
                     <label for="deadline" class="field-label">Deadline (optional)</label>
                     <input id="deadline" type="date">
@@ -290,7 +283,7 @@ $categories = [
       <div class="footer-content">
         <div class="copyright">© 2026 0100 Community Help</div>
         <div class="footer-links">
-          <a href="index.php#">About</a>
+          <a href="offers.php">Community Offers</a>
           <a href="admin.php">Admin</a>
           <a href="worker.php">Worker</a>
         </div>

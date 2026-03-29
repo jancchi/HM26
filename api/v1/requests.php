@@ -73,6 +73,13 @@ $organization = trim((string) ($payload['organization'] ?? ''));
 $roleInput = trim((string) ($payload['role'] ?? ''));
 $categoryInput = trim((string) ($payload['category'] ?? ''));
 $title = trim((string) ($payload['title'] ?? ''));
+$city = trim((string) ($payload['city'] ?? ''));
+$phone = trim((string) ($payload['phone'] ?? ''));
+$urgencyInput = trim((string) ($payload['urgency'] ?? 'medium'));
+$deadline = trim((string) ($payload['deadline'] ?? ''));
+$budgetRaw = trim((string) ($payload['budget'] ?? ''));
+$helpTypeInput = trim((string) ($payload['help_type'] ?? ($payload['helpType'] ?? 'volunteer')));
+$tagsInput = $payload['tags_text'] ?? ($payload['tagsText'] ?? ($payload['tags'] ?? ''));
 $description = trim((string) ($payload['description'] ?? ''));
 
 $roleMap = [
@@ -80,29 +87,87 @@ $roleMap = [
     'investor' => 'Investor',
     'service_provider' => 'Service Provider',
     'member' => 'Community Member',
+    'Startup' => 'Startup',
+    'Investor' => 'Investor',
+    'Service Provider' => 'Service Provider',
+    'Community Member' => 'Community Member',
 ];
 
 $categoryMap = [
-    'HIRING' => 'Hľadanie zamestnanca',
-    'INVESTOR_INTRO' => 'Hľadanie investora',
-    'SPEAKING_OPPORTUNITY' => 'Speaking na evente',
-    'MARKETING_SUPPORT' => 'Zdieľanie marketingových podkladov',
-    'SALES_SUPPORT' => 'Podpora v oblasti sales',
-    'PARTNERSHIP' => 'Hľadanie klientov',
-    'PRODUCT_FEEDBACK' => 'Iné',
-    'LEGAL_FINANCE' => 'Iné',
-    'OPERATIONS' => 'Iné',
-    'OTHER' => 'Iné',
+    'HIRING' => 'Employee Search',
+    'INVESTOR_INTRO' => 'Investor Search',
+    'SPEAKING_OPPORTUNITY' => 'Event Speaking',
+    'MARKETING_SUPPORT' => 'Marketing Materials Sharing',
+    'SALES_SUPPORT' => 'Sales Support',
+    'PARTNERSHIP' => 'Client Search',
+    'PRODUCT_FEEDBACK' => 'Other',
+    'LEGAL_FINANCE' => 'Other',
+    'OPERATIONS' => 'Other',
+    'OTHER' => 'Other',
+    'Employee Search' => 'Employee Search',
+    'Investor Search' => 'Investor Search',
+    'Event Speaking' => 'Event Speaking',
+    'Marketing Materials Sharing' => 'Marketing Materials Sharing',
+    'Sales Support' => 'Sales Support',
+    'Client Search' => 'Client Search',
+    'Other' => 'Other',
+    'Hľadanie zamestnanca' => 'Employee Search',
+    'Hľadanie investora' => 'Investor Search',
+    'Speaking na evente' => 'Event Speaking',
+    'Zdieľanie marketingových podkladov' => 'Marketing Materials Sharing',
+    'Podpora v oblasti sales' => 'Sales Support',
+    'Hľadanie klientov' => 'Client Search',
+    'Iné' => 'Other',
 ];
+
+$allowedUrgencies = ['low', 'medium', 'high'];
+$allowedHelpTypes = ['volunteer', 'financial', 'material', 'other'];
 
 $role = $roleMap[$roleInput] ?? '';
 $category = $categoryMap[$categoryInput] ?? '';
+$urgency = in_array($urgencyInput, $allowedUrgencies, true) ? $urgencyInput : 'medium';
+$helpType = in_array($helpTypeInput, $allowedHelpTypes, true) ? $helpTypeInput : 'volunteer';
+
+if ($city === '') {
+    $city = '-';
+}
+
+if ($title === '') {
+    $title = mb_substr($description !== '' ? $description : 'Request', 0, 120, 'UTF-8');
+}
+
+$budget = null;
+if ($budgetRaw !== '' && is_numeric($budgetRaw)) {
+    $budgetValue = (float) $budgetRaw;
+    if ($budgetValue >= 0) {
+        $budget = $budgetValue;
+    }
+}
+
+$tagsText = '';
+if (is_array($tagsInput)) {
+    $cleanTags = [];
+    foreach ($tagsInput as $tag) {
+        if (!is_scalar($tag)) {
+            continue;
+        }
+        $tagValue = trim((string) $tag);
+        if ($tagValue !== '') {
+            $cleanTags[] = $tagValue;
+        }
+    }
+    $tagsText = implode(', ', $cleanTags);
+} elseif (is_scalar($tagsInput)) {
+    $tagsText = trim((string) $tagsInput);
+}
 
 $hasRequiredValues = $name !== ''
     && $email !== ''
     && $role !== ''
     && $category !== ''
-    && $description !== '';
+    && $description !== ''
+    && $title !== ''
+    && $city !== '';
 
 if (!$hasRequiredValues || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
     respond([
@@ -123,8 +188,13 @@ $fullDescription = $title !== ''
 
 try {
     $stmt = $pdo->prepare(
-        'INSERT INTO requests (full_name, email, organization, role, category, description)
-         VALUES (:full_name, :email, :organization, :role, :category, :description)'
+        'INSERT INTO requests (
+            full_name, email, organization, role, category, title, city, phone,
+            description, urgency, deadline, budget, help_type, tags_text
+        ) VALUES (
+            :full_name, :email, :organization, :role, :category, :title, :city, :phone,
+            :description, :urgency, :deadline, :budget, :help_type, :tags_text
+        )'
     );
 
     $stmt->execute([
@@ -133,7 +203,15 @@ try {
         ':organization' => $organization !== '' ? $organization : null,
         ':role' => $role,
         ':category' => $category,
+        ':title' => $title,
+        ':city' => $city,
+        ':phone' => $phone !== '' ? $phone : null,
         ':description' => $fullDescription,
+        ':urgency' => $urgency,
+        ':deadline' => $deadline !== '' ? $deadline : null,
+        ':budget' => $budget,
+        ':help_type' => $helpType,
+        ':tags_text' => $tagsText !== '' ? $tagsText : null,
     ]);
 
     $requestId = (string) $pdo->lastInsertId();
@@ -151,7 +229,7 @@ try {
 
     respond([
         'id' => $requestId,
-        'status' => 'Nová',
+        'status' => 'New',
         'createdAt' => gmdate('c'),
     ], 201);
 } catch (Throwable $e) {

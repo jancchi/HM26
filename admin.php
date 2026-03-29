@@ -424,6 +424,29 @@ $categoryFilter = trim($_GET['category'] ?? '');
 $statusFilter = trim($_GET['status'] ?? '');
 $unassignedFilter = isset($_GET['unassigned']) && $_GET['unassigned'] === '1' ? '1' : '';
 
+$requiredAiColumns = [
+    'ai_summary',
+    'ai_urgency',
+    'ai_category',
+    'ai_recommended_member_profile',
+];
+$availableRequestColumns = [];
+try {
+    $columnsStmt = $pdo->query('SHOW COLUMNS FROM requests');
+    foreach ($columnsStmt->fetchAll() as $columnRow) {
+        if (isset($columnRow['Field'])) {
+            $availableRequestColumns[] = (string) $columnRow['Field'];
+        }
+    }
+} catch (Exception $e) {
+    $availableRequestColumns = [];
+}
+$hasAiColumns = count(array_diff($requiredAiColumns, $availableRequestColumns)) === 0;
+
+$aiSelectSql = $hasAiColumns
+    ? 'r.ai_summary, r.ai_urgency, r.ai_category, r.ai_recommended_member_profile'
+    : 'NULL AS ai_summary, NULL AS ai_urgency, NULL AS ai_category, NULL AS ai_recommended_member_profile';
+
 if (!in_array($categoryFilter, $allowedCategories, true)) {
     $categoryFilter = '';
 }
@@ -473,7 +496,7 @@ foreach ($workersByCategoryRows as $row) {
 // <!-- MODIFIED: include fields required by compact table and AI panel -->
 $sql = 'SELECT r.id, r.full_name, r.email, r.organization, r.role, r.category, r.title, r.city, r.description, r.urgency,
                r.status, r.created_at, r.is_vip, r.admin_note, r.rejection_note, r.assigned_worker_id,
-               r.ai_summary, r.ai_urgency, r.ai_category, r.ai_recommended_member_profile,
+               ' . $aiSelectSql . ',
                w.full_name AS worker_name
          FROM requests r
          LEFT JOIN workers w ON w.id = r.assigned_worker_id';
@@ -580,76 +603,13 @@ $notice = $_SESSION['admin_notice'] ?? null;
       <div class="stat-card"><div class="meta-label muted">Waiting Approval</div><div class="stat-value"><?php echo $statsWaiting; ?></div></div>
     </div>
 
-    <div class="split section">
-      <div class="panel">
-        <div class="meta-label muted">Workers</div>
-        <div class="form-grid section">
-          <?php foreach ($allowedCategories as $category): ?>
-            <div class="form-group">
-              <label>Workers: <?php echo h($category); ?></label>
-              <select>
-                <option value="">Select worker</option>
-                <?php foreach (($workersByCategory[$category] ?? []) as $worker): ?>
-                  <option value="<?php echo (int) $worker['id']; ?>"><?php echo h($worker['full_name']); ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-          <?php endforeach; ?>
-        </div>
-
-        <hr class="section-divider">
-
-        <div class="meta-label muted">Add Worker</div>
-        <form method="POST" action="admin.php" class="form-grid section">
-          <div class="form-group"><label for="worker_name">Full Name</label><input id="worker_name" name="worker_name" type="text" required></div>
-          <div class="form-group"><label for="worker_username">Username</label><input id="worker_username" name="worker_username" type="text" required></div>
-          <div class="form-group"><label for="worker_password">Password</label><input id="worker_password" name="worker_password" type="text" required></div>
-          <div class="form-group">
-            <label for="worker_category">Primary Category</label>
-            <select id="worker_category" name="worker_category" required>
-              <option value="">Select category</option>
-              <?php foreach ($allowedCategories as $category): ?>
-                <option value="<?php echo h($category); ?>"><?php echo h($category); ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <button type="submit" class="btn">Add Worker</button>
-        </form>
-      </div>
-
-      <div class="panel">
-        <div class="meta-label muted">Clients</div>
-        <div class="list">
-          <?php foreach ($clients as $client): ?>
-            <div class="list-item">
-              <div class="<?php echo (int) $client['is_vip'] === 1 ? 'vip-name' : ''; ?>"><strong><?php echo h($client['full_name']); ?></strong></div>
-              <div class="muted"><?php echo h($client['email']); ?></div>
-              <form method="POST" action="admin.php" class="inline-row section">
-                <input type="hidden" name="toggle_vip_request_id" value="<?php echo (int) $client['id']; ?>">
-                <input type="hidden" name="toggle_vip_value" value="0">
-                <label class="inline-row" style="gap: 6px;">
-                  <input
-                    type="checkbox"
-                    name="toggle_vip_value"
-                    value="1"
-                    <?php echo (int) $client['is_vip'] === 1 ? 'checked' : ''; ?>
-                    onchange="this.form.submit()"
-                  >
-                  <span class="tiny">VIP</span>
-                </label>
-              </form>
-            </div>
-          <?php endforeach; ?>
-        </div>
-      </div>
-    </div>
-
+    <!-- MODIFIED: move view summary above workers/clients -->
     <div class="panel" style="margin-bottom: 16px;">
       <div class="meta-label muted">View Summary</div>
       <p class="section">Showing <?php echo $displayedCount; ?> request(s)</p>
     </div>
 
-    <!-- MODIFIED: simplify table and move details into expandable sub-row -->
+    <!-- MODIFIED: move table card above workers/clients -->
     <div class="table-card">
       <div class="table-scroll">
         <table>
@@ -852,6 +812,71 @@ $notice = $_SESSION['admin_notice'] ?? null;
         </table>
       </div>
     </div>
+
+    <div class="split section">
+      <div class="panel">
+        <div class="meta-label muted">Workers</div>
+        <div class="form-grid section">
+          <?php foreach ($allowedCategories as $category): ?>
+            <div class="form-group">
+              <label>Workers: <?php echo h($category); ?></label>
+              <select>
+                <option value="">Select worker</option>
+                <?php foreach (($workersByCategory[$category] ?? []) as $worker): ?>
+                  <option value="<?php echo (int) $worker['id']; ?>"><?php echo h($worker['full_name']); ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+          <?php endforeach; ?>
+        </div>
+
+        <hr class="section-divider">
+
+        <div class="meta-label muted">Add Worker</div>
+        <form method="POST" action="admin.php" class="form-grid section">
+          <div class="form-group"><label for="worker_name">Full Name</label><input id="worker_name" name="worker_name" type="text" required></div>
+          <div class="form-group"><label for="worker_username">Username</label><input id="worker_username" name="worker_username" type="text" required></div>
+          <div class="form-group"><label for="worker_password">Password</label><input id="worker_password" name="worker_password" type="text" required></div>
+          <div class="form-group">
+            <label for="worker_category">Primary Category</label>
+            <select id="worker_category" name="worker_category" required>
+              <option value="">Select category</option>
+              <?php foreach ($allowedCategories as $category): ?>
+                <option value="<?php echo h($category); ?>"><?php echo h($category); ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <button type="submit" class="btn">Add Worker</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="meta-label muted">Clients</div>
+        <div class="list">
+          <?php foreach ($clients as $client): ?>
+            <div class="list-item">
+              <div class="<?php echo (int) $client['is_vip'] === 1 ? 'vip-name' : ''; ?>"><strong><?php echo h($client['full_name']); ?></strong></div>
+              <div class="muted"><?php echo h($client['email']); ?></div>
+              <form method="POST" action="admin.php" class="inline-row section">
+                <input type="hidden" name="toggle_vip_request_id" value="<?php echo (int) $client['id']; ?>">
+                <input type="hidden" name="toggle_vip_value" value="0">
+                <label class="inline-row" style="gap: 6px;">
+                  <input
+                    type="checkbox"
+                    name="toggle_vip_value"
+                    value="1"
+                    <?php echo (int) $client['is_vip'] === 1 ? 'checked' : ''; ?>
+                    onchange="this.form.submit()"
+                  >
+                  <span class="tiny">VIP</span>
+                </label>
+              </form>
+            </div>
+          <?php endforeach; ?>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- MODIFIED: add expandable sub-row toggle behavior -->

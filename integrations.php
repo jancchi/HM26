@@ -17,6 +17,10 @@ function analyzeRequestWithGemini(array $input): array
         return $nullResult;
     }
 
+    if (!function_exists('curl_init')) {
+        return $nullResult;
+    }
+
     $contextJson = json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     if ($contextJson === false) {
         $contextJson = '{}';
@@ -26,7 +30,7 @@ function analyzeRequestWithGemini(array $input): array
         . "Return ONLY valid JSON with exactly these keys: category, urgency, summary, recommended_member_profile.\n"
         . "Rules:\n"
         . "- category: string\n"
-        . "- urgency: integer from 1 to 5\n"
+        . "- urgency: integer from 1 to 10\n"
         . "- summary: string, max 140 characters\n"
         . "- recommended_member_profile: string\n"
         . "Do not include markdown, code fences, explanations, or extra keys.\n"
@@ -118,7 +122,7 @@ function analyzeRequestWithGemini(array $input): array
     $urgency = null;
     if (is_int($parsed['urgency']) || (is_string($parsed['urgency']) && preg_match('/^-?\d+$/', $parsed['urgency']) === 1)) {
         $urgencyInt = (int) $parsed['urgency'];
-        if ($urgencyInt >= 1 && $urgencyInt <= 5) {
+        if ($urgencyInt >= 1 && $urgencyInt <= 10) {
             $urgency = $urgencyInt;
         }
     }

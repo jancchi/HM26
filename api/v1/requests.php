@@ -2,6 +2,64 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/bootstrap.php';
+require_once dirname(__DIR__, 2) . '/config.php';
+require_once dirname(__DIR__, 2) . '/integrations.php';
+
+function hasRequestColumn(PDO $pdo, string $columnName): bool
+{
+    static $columns = null;
+
+    if ($columns === null) {
+        $columns = [];
+        try {
+            $stmt = $pdo->query('SHOW COLUMNS FROM requests');
+            foreach ($stmt->fetchAll() as $row) {
+                if (isset($row['Field'])) {
+                    $columns[] = (string) $row['Field'];
+                }
+            }
+        } catch (Throwable $e) {
+            $columns = [];
+        }
+    }
+
+    return in_array($columnName, $columns, true);
+}
+
+function persistAiAnalysis(PDO $pdo, int $requestId, array $analysis): void
+{
+    if ($requestId <= 0) {
+        return;
+    }
+
+    $candidateColumns = [
+        'ai_category' => $analysis['category'] ?? null,
+        'ai_urgency' => $analysis['urgency'] ?? null,
+        'ai_summary' => $analysis['summary'] ?? null,
+        'ai_recommended_member_profile' => $analysis['recommended_member_profile'] ?? null,
+        'ai_raw_json' => $analysis['raw_json'] ?? null,
+    ];
+
+    $sets = [];
+    $params = [':id' => $requestId];
+    foreach ($candidateColumns as $column => $value) {
+        if (!hasRequestColumn($pdo, $column)) {
+            continue;
+        }
+        $sets[] = $column . ' = :' . $column;
+        $params[':' . $column] = $value;
+    }
+
+    if (empty($sets)) {
+        return;
+    }
+
+    try {
+        $stmt = $pdo->prepare('UPDATE requests SET ' . implode(', ', $sets) . ' WHERE id = :id');
+        $stmt->execute($params);
+    } catch (Throwable $e) {
+    }
+}
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     respond(['message' => 'Method not allowed'], 405);
@@ -79,6 +137,17 @@ try {
     ]);
 
     $requestId = (string) $pdo->lastInsertId();
+
+    $analysis = analyzeRequestWithGemini([
+        'full_name' => $name,
+        'email' => $email,
+        'organization' => $organization,
+        'role' => $role,
+        'category' => $category,
+        'title' => $title,
+        'description' => $description,
+    ]);
+    persistAiAnalysis($pdo, (int) $requestId, $analysis);
 
     respond([
         'id' => $requestId,

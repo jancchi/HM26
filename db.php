@@ -1,9 +1,9 @@
 <?php
-$host = '127.0.0.1';
+$host = 'sql100.infinityfree.com';
 $port = 3306;
 $dbname = 'if0_41421557_halmake';
-$user = 'root';
-$pass = '';
+$user = 'if0_41421557';
+$pass = 'sKtLT2NtcJz';
 
 $dsn = "mysql:host={$host};port={$port};dbname={$dbname};charset=utf8mb4";
 
@@ -13,6 +13,6 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 } catch (PDOException $e) {
-    die($e->getMessage());
+    die('Database connection failed.');
 }
 ?>

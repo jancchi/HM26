@@ -12,7 +12,7 @@ $allowedCategories = [
     'Client Search',
     'Other',
 ];
-$allowedStatuses = ['New', 'Assigned', 'In Progress', 'Done (Waiting Approval)', 'Resolved'];
+$allowedStatuses = ['New', 'Nová', 'Assigned', 'In Progress', 'Done (Waiting Approval)', 'Resolved', 'Vyriešená'];
 
 function h(string $value): string
 {
@@ -151,6 +151,80 @@ function statusClass(string $status): string
         return 'waiting';
     }
     return 'resolved';
+}
+
+function isResolvedStatus(string $status): bool
+{
+    return $status === 'Resolved' || $status === 'Vyriešená';
+}
+
+function pickWorkerForCategory(PDO $pdo, string $requestCategory): ?array
+{
+    $canonicalRequestCategory = canonicalCategory($requestCategory);
+
+    $candidateStmt = $pdo->prepare(
+        'SELECT w.id, w.full_name, wc.category, COUNT(r.id) AS open_count
+         FROM workers w
+         INNER JOIN worker_categories wc ON wc.worker_id = w.id
+         LEFT JOIN requests r
+           ON r.assigned_worker_id = w.id
+           AND (r.status = :assigned OR r.status = :in_progress OR r.status = :in_progress_legacy)
+         WHERE w.active = 1
+         GROUP BY w.id, w.full_name, wc.category'
+    );
+    $candidateStmt->execute([
+        ':assigned' => 'Assigned',
+        ':in_progress' => 'In Progress',
+        ':in_progress_legacy' => 'V riešení',
+    ]);
+
+    $best = null;
+    foreach ($candidateStmt->fetchAll() as $row) {
+        $workerCategory = canonicalCategory((string) ($row['category'] ?? ''));
+        if ($workerCategory !== $canonicalRequestCategory) {
+            continue;
+        }
+
+        $openCount = (int) ($row['open_count'] ?? 0);
+        $id = (int) ($row['id'] ?? 0);
+        if ($id <= 0) {
+            continue;
+        }
+
+        if ($best === null || $openCount < $best['open_count'] || ($openCount === $best['open_count'] && $id < $best['id'])) {
+            $best = [
+                'id' => $id,
+                'full_name' => (string) ($row['full_name'] ?? ''),
+                'open_count' => $openCount,
+            ];
+        }
+    }
+
+    return $best;
+}
+
+function workerEligibleForCategory(PDO $pdo, int $workerId, string $requestCategory): bool
+{
+    if ($workerId <= 0) {
+        return false;
+    }
+
+    $workerCategoryStmt = $pdo->prepare(
+        'SELECT wc.category
+         FROM workers w
+         INNER JOIN worker_categories wc ON wc.worker_id = w.id
+         WHERE w.id = :worker_id AND w.active = 1'
+    );
+    $workerCategoryStmt->execute([':worker_id' => $workerId]);
+
+    $canonicalRequestCategory = canonicalCategory($requestCategory);
+    foreach ($workerCategoryStmt->fetchAll() as $row) {
+        if (canonicalCategory((string) ($row['category'] ?? '')) === $canonicalRequestCategory) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function redirectWithFilters(array $allowedCategories, array $allowedStatuses): void
@@ -299,36 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_request_id']))
         redirectWithFilters($allowedCategories, $allowedStatuses);
     }
 
-    $candidateSql = "
-        SELECT w.id, w.full_name, COUNT(r.id) AS open_count
-        FROM workers w
-        INNER JOIN worker_categories wc ON wc.worker_id = w.id
-        LEFT JOIN requests r
-          ON r.assigned_worker_id = w.id
-          AND (r.status = :assigned OR r.status = :in_progress)
-        WHERE w.active = 1 AND (
-            wc.category = :category_raw OR
-            wc.category = :category_canonical OR
-            wc.category = :category_localized OR
-            wc.category = :category_ascii
-        )
-        GROUP BY w.id, w.full_name
-        ORDER BY open_count ASC, w.id ASC
-        LIMIT 1
-    ";
-    $candidateStmt = $pdo->prepare($candidateSql);
     $requestCategory = canonicalCategory((string) $request['category']);
-    $categoryVariants = categoryVariants($requestCategory);
-
-    $candidateStmt->execute([
-        ':assigned' => 'Assigned',
-        ':in_progress' => 'In Progress',
-        ':category_raw' => $categoryVariants[0],
-        ':category_canonical' => $categoryVariants[1] ?? $categoryVariants[0],
-        ':category_localized' => $categoryVariants[2] ?? $categoryVariants[0],
-        ':category_ascii' => $categoryVariants[3] ?? $categoryVariants[0],
-    ]);
-    $worker = $candidateStmt->fetch();
+    $worker = pickWorkerForCategory($pdo, $requestCategory);
 
     if (!$worker) {
         $_SESSION['admin_notice'] = ['type' => 'error', 'text' => 'No active worker in this category.'];
@@ -361,18 +407,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['manual_assign_request
     }
 
     $requestCategory = canonicalCategory((string) $request['category']);
-    $categoryVariants = categoryVariants($requestCategory);
-
-    $eligibilityStmt = $pdo->prepare('SELECT w.id FROM workers w INNER JOIN worker_categories wc ON wc.worker_id = w.id WHERE w.id = :worker_id AND w.active = 1 AND (wc.category = :category_raw OR wc.category = :category_canonical OR wc.category = :category_localized OR wc.category = :category_ascii) LIMIT 1');
-    $eligibilityStmt->execute([
-        ':worker_id' => $workerId,
-        ':category_raw' => $categoryVariants[0],
-        ':category_canonical' => $categoryVariants[1] ?? $categoryVariants[0],
-        ':category_localized' => $categoryVariants[2] ?? $categoryVariants[0],
-        ':category_ascii' => $categoryVariants[3] ?? $categoryVariants[0],
-    ]);
-
-    if (!$eligibilityStmt->fetch()) {
+    if (!workerEligibleForCategory($pdo, $workerId, $requestCategory)) {
         $_SESSION['admin_notice'] = ['type' => 'error', 'text' => 'Worker is not valid for this category.'];
         redirectWithFilters($allowedCategories, $allowedStatuses);
     }
@@ -387,6 +422,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['manual_assign_request
 
     $_SESSION['admin_notice'] = ['type' => 'success', 'text' => 'Manual assignment saved for request #' . $requestId . '.'];
     redirectWithFilters($allowedCategories, $allowedStatuses);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['backfill_unassigned'])) {
+    $fetchUnassignedStmt = $pdo->prepare(
+        'SELECT id, category, status FROM requests WHERE assigned_worker_id IS NULL ORDER BY created_at ASC'
+    );
+    $fetchUnassignedStmt->execute();
+    $unassignedRequests = $fetchUnassignedStmt->fetchAll();
+
+    $assignedCount = 0;
+    foreach ($unassignedRequests as $item) {
+        $requestStatus = (string) ($item['status'] ?? '');
+        if (isResolvedStatus($requestStatus)) {
+            continue;
+        }
+
+        $requestId = (int) ($item['id'] ?? 0);
+        if ($requestId <= 0) {
+            continue;
+        }
+
+        $requestCategory = canonicalCategory((string) ($item['category'] ?? ''));
+        $worker = pickWorkerForCategory($pdo, $requestCategory);
+        if ($worker === null) {
+            continue;
+        }
+
+        $updateStmt = $pdo->prepare(
+            'UPDATE requests
+             SET assigned_worker_id = :worker_id,
+                 status = :status,
+                 rejection_note = NULL
+             WHERE id = :id'
+        );
+        $updateStmt->execute([
+            ':worker_id' => (int) $worker['id'],
+            ':status' => 'Assigned',
+            ':id' => $requestId,
+        ]);
+
+        $assignedCount++;
+    }
+
+    $_SESSION['admin_notice'] = [
+        'type' => 'success',
+        'text' => 'Backfill complete. Assigned ' . $assignedCount . ' unassigned request(s).',
+    ];
+    header('Location: admin.php');
+    exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_decision_request_id'], $_POST['admin_decision'])) {
@@ -458,12 +542,18 @@ $statsTotal = (int) $pdo->query('SELECT COUNT(*) FROM requests')->fetchColumn();
 $statsNewStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :status');
 $statsNewStmt->execute([':status' => 'New']);
 $statsNew = (int) $statsNewStmt->fetchColumn();
-$statsActiveStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :assigned OR status = :progress');
-$statsActiveStmt->execute([':assigned' => 'Assigned', ':progress' => 'In Progress']);
+$statsNewLegacyStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :status');
+$statsNewLegacyStmt->execute([':status' => 'Nová']);
+$statsNew += (int) $statsNewLegacyStmt->fetchColumn();
+$statsActiveStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :assigned OR status = :progress OR status = :progress_legacy');
+$statsActiveStmt->execute([':assigned' => 'Assigned', ':progress' => 'In Progress', ':progress_legacy' => 'V riešení']);
 $statsActive = (int) $statsActiveStmt->fetchColumn();
 $statsDoneStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :status');
 $statsDoneStmt->execute([':status' => 'Resolved']);
 $statsDone = (int) $statsDoneStmt->fetchColumn();
+$statsDoneLegacyStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :status');
+$statsDoneLegacyStmt->execute([':status' => 'Vyriešená']);
+$statsDone += (int) $statsDoneLegacyStmt->fetchColumn();
 // <!-- MODIFIED: add waiting-approval metric query -->
 $statsWaitingStmt = $pdo->prepare('SELECT COUNT(*) FROM requests WHERE status = :status');
 $statsWaitingStmt->execute([':status' => 'Done (Waiting Approval)']);
@@ -495,7 +585,7 @@ foreach ($workersByCategoryRows as $row) {
 
 // <!-- MODIFIED: include fields required by compact table and AI panel -->
 $sql = 'SELECT r.id, r.full_name, r.email, r.organization, r.role, r.category, r.title, r.city, r.description, r.urgency,
-               r.status, r.created_at, r.is_vip, r.admin_note, r.rejection_note, r.assigned_worker_id,
+               r.status, r.created_at, r.is_vip, r.admin_note, r.rejection_note, r.assigned_worker_id, r.ai_matches,
                ' . $aiSelectSql . ',
                w.full_name AS worker_name
          FROM requests r
@@ -547,6 +637,9 @@ $notice = $_SESSION['admin_notice'] ?? null;
         <button type="button" class="nav-link" id="theme-toggle">Switch Theme</button>
         <a class="nav-link" href="index.php">Public Form</a>
         <a class="nav-link" href="worker.php">Worker Page</a>
+        <form method="POST" action="admin.php" style="margin: 0;">
+          <button type="submit" name="backfill_unassigned" value="1" class="nav-link" style="background: transparent; cursor: pointer;">Backfill Unassigned</button>
+        </form>
         <a class="nav-link" href="admin.php?logout=1">Logout</a>
       </div>
     </div>
@@ -621,12 +714,13 @@ $notice = $_SESSION['admin_notice'] ?? null;
               <th>Priority</th>
               <th>Status</th>
               <th>Worker</th>
+              <th>Matches</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             <?php if (empty($requests)): ?>
-              <tr><td colspan="7" class="muted">No requests found for current filter view.</td></tr>
+               <tr><td colspan="8" class="muted">No requests found for current filter view.</td></tr>
             <?php else: ?>
               <?php foreach ($requests as $request): ?>
                 <?php $rowCategory = canonicalCategory((string) $request['category']); ?>
@@ -692,6 +786,9 @@ $notice = $_SESSION['admin_notice'] ?? null;
                     <?php endif; ?>
                   </td>
                   <td>
+                    <a href="matches.php?id=<?php echo (int) $request['id']; ?>" class="btn btn-subtle">View Matches</a>
+                  </td>
+                  <td>
                     <!-- MODIFIED: keep collapsed actions to icon buttons only -->
                     <div class="actions-icon-row">
                       <button type="button" class="icon-btn js-toggle-details" data-target="<?php echo h($detailsId); ?>" aria-expanded="false" aria-controls="<?php echo h($detailsId); ?>" title="Expand details">
@@ -716,7 +813,7 @@ $notice = $_SESSION['admin_notice'] ?? null;
                   </td>
                 </tr>
                 <tr id="<?php echo h($detailsId); ?>" class="request-detail-row" hidden>
-                  <td colspan="7">
+                  <td colspan="8">
                     <!-- MODIFIED: expanded detail row with notes, AI panel, forms and created-at -->
                     <div class="request-detail-panel">
                       <div class="detail-meta-row">
@@ -763,7 +860,7 @@ $notice = $_SESSION['admin_notice'] ?? null;
                         <?php endif; ?>
                       </div>
 
-                      <?php if (empty($request['assigned_worker_id']) && $request['status'] !== 'Resolved'): ?>
+                      <?php if (empty($request['assigned_worker_id']) && !isResolvedStatus((string) $request['status'])): ?>
                         <div class="detail-actions-grid">
                           <form method="POST" action="admin.php" class="inline-form">
                             <input type="hidden" name="assign_request_id" value="<?php echo (int) $request['id']; ?>">

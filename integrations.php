@@ -149,3 +149,70 @@ function analyzeRequestWithGemini(array $input): array
         'raw_json' => $rawText,
     ];
 }
+
+function matchRequestToOffers(array $request, array $offers): array
+{
+    if (empty($offers)) return [];
+    if (!defined('GEMINI_API_KEY') || trim((string) GEMINI_API_KEY) === '') return [];
+    if (!defined('GEMINI_MODEL') || trim((string) GEMINI_MODEL) === '') return [];
+    if (!function_exists('curl_init')) return [];
+
+    $offersSafe = array_map(fn($o) => [
+        'offer_id' => (int) ($o['id'] ?? 0),
+        'full_name' => (string) ($o['full_name'] ?? ''),
+        'role' => (string) ($o['role'] ?? ''),
+        'skills_description' => (string) ($o['skills_description'] ?? ''),
+        'category' => (string) ($o['category'] ?? ''),
+        'city' => (string) ($o['city'] ?? ''),
+    ], $offers);
+
+    $prompt = "You are a matchmaking engine for a startup/investor community.\n"
+        . "Given a REQUEST and COMMUNITY OFFERS, return the top 3 best-matching offers.\n"
+        . "Return ONLY a valid JSON array. Each element: offer_id (int), score (int 1-10), reason (string max 100 chars).\n"
+        . "No markdown, no extra keys. If no match, return [].\n\n"
+        . "REQUEST:\n" . json_encode($request, JSON_UNESCAPED_UNICODE) . "\n\n"
+        . "COMMUNITY OFFERS:\n" . json_encode($offersSafe, JSON_UNESCAPED_UNICODE);
+
+    $url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+        . rawurlencode((string) GEMINI_MODEL) . ':generateContent?key=' . rawurlencode((string) GEMINI_API_KEY);
+
+    $payload = [
+        'contents' => [['parts' => [['text' => $prompt]]]],
+        'generationConfig' => ['responseMimeType' => 'application/json'],
+    ];
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
+        CURLOPT_TIMEOUT => 15,
+    ]);
+    $body = curl_exec($ch);
+    $errno = curl_errno($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($errno !== 0 || !is_string($body) || $httpCode < 200 || $httpCode >= 300) return [];
+
+    $outer = json_decode($body, true);
+    $text = $outer['candidates'][0]['content']['parts'][0]['text'] ?? null;
+    if (!$text) return [];
+
+    $parsed = json_decode(trim($text), true);
+    if (!is_array($parsed)) return [];
+
+    $validIds = array_column($offersSafe, 'offer_id');
+    $result = [];
+    foreach ($parsed as $item) {
+        if (!isset($item['offer_id'], $item['score'], $item['reason'])) continue;
+        if (!in_array((int) $item['offer_id'], $validIds, true)) continue;
+        $result[] = [
+            'offer_id' => (int) $item['offer_id'],
+            'score' => max(1, min(10, (int) $item['score'])),
+            'reason' => mb_substr(trim((string) $item['reason']), 0, 100, 'UTF-8'),
+        ];
+    }
+    return array_slice($result, 0, 3);
+}

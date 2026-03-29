@@ -181,6 +181,28 @@ try {
     ]);
     persistAiAnalysis($pdo, (int) $newId, $analysis);
 
+    try {
+        $offersStmt = $pdo->query('SELECT id, full_name, role, skills_description, category, city FROM offers WHERE active = 1 ORDER BY created_at DESC LIMIT 50');
+        $allOffers = $offersStmt->fetchAll();
+        if (!empty($allOffers)) {
+            $matches = matchRequestToOffers([
+                'title' => $title,
+                'category' => $category,
+                'role' => $role,
+                'description' => $description,
+                'city' => $city,
+                'urgency' => $urgency,
+                'help_type' => $helpType,
+                'tags_text' => $tagsText,
+            ], $allOffers);
+            if (!empty($matches)) {
+                $pdo->prepare('UPDATE requests SET ai_matches = :m WHERE id = :id')
+                    ->execute([':m' => json_encode($matches, JSON_UNESCAPED_UNICODE), ':id' => (int) $newId]);
+            }
+        }
+    } catch (Exception $e) {
+    }
+
     header('Location: index.php?success=1&id=' . urlencode($newId));
     exit;
 } catch (Exception $e) {

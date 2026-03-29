@@ -1,0 +1,45 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Hackaton26 PHP API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/ping": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Ping"
+          }
+        }
+      }
+    },
+    "/api/v1/categories": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Categories"
+          }
+        }
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Stats"
+          }
+        }
+      }
+    },
+    "/api/v1/requests": {
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Request created"
+          }
+        }
+      }
+    }
+  }
+}

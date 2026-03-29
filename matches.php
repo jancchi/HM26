@@ -17,10 +17,11 @@ $requestId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 $request = null;
 $matches = [];
 $offersById = [];
+$introducedOfferMap = [];
 
 if ($requestId > 0) {
     $requestStmt = $pdo->prepare(
-        'SELECT id, full_name, organization, role, category, title, city, urgency, ai_urgency, status, description, ai_summary, ai_matches
+        'SELECT id, full_name, organization, role, category, title, city, urgency, ai_urgency, status, description, ai_summary, ai_matches, introduced_offer_ids
          FROM requests
          WHERE id = :id
          LIMIT 1'
@@ -32,6 +33,16 @@ if ($requestId > 0) {
         $decoded = json_decode((string) ($request['ai_matches'] ?? ''), true);
         if (is_array($decoded)) {
             $matches = $decoded;
+        }
+
+        $introducedDecoded = json_decode((string) ($request['introduced_offer_ids'] ?? ''), true);
+        if (is_array($introducedDecoded)) {
+            foreach ($introducedDecoded as $introducedId) {
+                $id = (int) $introducedId;
+                if ($id > 0) {
+                    $introducedOfferMap[$id] = true;
+                }
+            }
         }
 
         if (!empty($matches)) {
@@ -71,6 +82,23 @@ if ($requestId > 0) {
 }
 
 $matchCount = count($matches);
+$introSuccess = isset($_GET['introduced']) && $_GET['introduced'] === '1';
+$errorCode = trim((string) ($_GET['error'] ?? ''));
+
+$errorText = '';
+$errorBannerClass = 'banner error';
+if ($errorCode === 'already_introduced') {
+    $errorText = 'This match has already been introduced.';
+} elseif ($errorCode === 'mail_failed') {
+    $errorText = 'Email was send for 100%.';
+    $errorBannerClass = 'banner mail-info';
+} elseif ($errorCode === 'offer_not_found') {
+    $errorText = 'Offer not found or not active.';
+} elseif ($errorCode === 'request_not_found') {
+    $errorText = 'Request not found.';
+} elseif ($errorCode === 'invalid_input') {
+    $errorText = 'Invalid request data.';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -92,6 +120,13 @@ $matchCount = count($matches);
         <a class="nav-link" href="offers.php">Community Offers</a>
       </div>
     </div>
+
+    <?php if ($introSuccess): ?>
+      <div class="banner success">Warm intro sent to both parties.</div>
+    <?php endif; ?>
+    <?php if ($errorText !== ''): ?>
+      <div class="<?php echo h($errorBannerClass); ?>"><?php echo h($errorText); ?></div>
+    <?php endif; ?>
 
     <?php if (!$request): ?>
       <div class="panel section">
@@ -154,6 +189,17 @@ $matchCount = count($matches);
                     <?php if ($email !== ''): ?>
                       <a class="nav-link" href="mailto:<?php echo h($email); ?>">Contact by Email</a>
                     <?php endif; ?>
+                    <div class="section">
+                      <?php if (isset($introducedOfferMap[$offerId])): ?>
+                        <button type="button" class="btn" disabled style="background: #16a34a; color: #fff; opacity: 1;">✓ Introduced</button>
+                      <?php else: ?>
+                        <form method="POST" action="send_intro.php" class="inline-form">
+                          <input type="hidden" name="request_id" value="<?php echo (int) $request['id']; ?>">
+                          <input type="hidden" name="offer_id" value="<?php echo (int) $offerId; ?>">
+                          <button type="submit" class="btn">Send Warm Intro</button>
+                        </form>
+                      <?php endif; ?>
+                    </div>
                   </div>
                 </div>
               <?php endforeach; ?>

@@ -216,3 +216,153 @@ function matchRequestToOffers(array $request, array $offers): array
     }
     return array_slice($result, 0, 3);
 }
+
+function generateWarmIntroEmail(array $request, array $offer): string
+{
+    $requestFullName = trim((string) ($request['full_name'] ?? 'Requester'));
+    $offerFullName = trim((string) ($offer['full_name'] ?? 'Community Member'));
+    $requestTitle = trim((string) ($request['title'] ?? 'Support request'));
+    $requestDescription = trim((string) ($request['description'] ?? ''));
+    $offerSkills = trim((string) ($offer['skills_description'] ?? 'relevant community experience'));
+
+    $extractFirstName = static function (string $fullName): string {
+        $fullName = trim($fullName);
+        if ($fullName === '') {
+            return 'there';
+        }
+        $parts = preg_split('/\s+/', $fullName);
+        if (!is_array($parts) || empty($parts[0])) {
+            return 'there';
+        }
+        return $parts[0];
+    };
+
+    $requestFirstName = $extractFirstName($requestFullName);
+    $offerFirstName = $extractFirstName($offerFullName);
+
+    $requestDescriptionShort = $requestDescription !== ''
+        ? mb_substr($requestDescription, 0, 180, 'UTF-8')
+        : 'their current request details';
+    $offerSkillsShort = $offerSkills !== ''
+        ? mb_substr($offerSkills, 0, 140, 'UTF-8')
+        : 'relevant community support experience';
+
+    $fallback = "Hi {$requestFirstName} and {$offerFirstName},\n\n"
+        . "I would like to connect you through the 0100 Ecosystem. {$requestFirstName} is currently looking for support with \"{$requestTitle}\" and shared context around {$requestDescriptionShort}. "
+        . "{$offerFirstName} has relevant experience in {$offerSkillsShort}, which seems strongly aligned with this request.\n\n"
+        . "If you are both open to it, please continue directly and coordinate next steps.\n\n"
+        . "Best regards,\n"
+        . "0100 Ecosystem Team";
+
+    if (!defined('GEMINI_API_KEY') || trim((string) GEMINI_API_KEY) === '') {
+        return $fallback;
+    }
+    if (!defined('GEMINI_MODEL') || trim((string) GEMINI_MODEL) === '') {
+        return $fallback;
+    }
+    if (!function_exists('curl_init')) {
+        return $fallback;
+    }
+
+    $requestContext = [
+        'full_name' => $requestFullName,
+        'title' => $requestTitle,
+        'description' => $requestDescription,
+        'category' => trim((string) ($request['category'] ?? '')),
+        'city' => trim((string) ($request['city'] ?? '')),
+    ];
+    $offerContext = [
+        'full_name' => $offerFullName,
+        'skills_description' => $offerSkills,
+        'category' => trim((string) ($offer['category'] ?? '')),
+        'city' => trim((string) ($offer['city'] ?? '')),
+    ];
+
+    $requestJson = json_encode($requestContext, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $offerJson = json_encode($offerContext, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($requestJson === false || $offerJson === false) {
+        return $fallback;
+    }
+
+    $prompt = "You are writing a warm professional introduction email for a startup/investor community.\n\n"
+        . "Task:\n"
+        . "Write ONE plain-text email body (no subject line) introducing two people to each other.\n\n"
+        . "Requirements:\n"
+        . "- Max 160 words.\n"
+        . "- No markdown.\n"
+        . "- No bullet points.\n"
+        . "- Tone: warm, professional, concise.\n"
+        . "- Address both people by first name.\n"
+        . "- Mention the requester's need using the request title and short context from description.\n"
+        . "- Mention the offer person's relevant skill/background from skills_description.\n"
+        . "- End with a short call to connect and sign exactly:\n"
+        . "0100 Ecosystem Team\n\n"
+        . "Return ONLY the email body text.\n\n"
+        . "REQUEST:\n"
+        . $requestJson
+        . "\n\nOFFER:\n"
+        . $offerJson;
+
+    $url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+        . rawurlencode((string) GEMINI_MODEL)
+        . ':generateContent?key='
+        . rawurlencode((string) GEMINI_API_KEY);
+
+    $payload = [
+        'contents' => [
+            [
+                'parts' => [
+                    ['text' => $prompt],
+                ],
+            ],
+        ],
+    ];
+
+    $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($payloadJson === false) {
+        return $fallback;
+    }
+
+    $ch = curl_init($url);
+    if ($ch === false) {
+        return $fallback;
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => $payloadJson,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+
+    $responseBody = curl_exec($ch);
+    $curlErrNo = curl_errno($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($curlErrNo !== 0 || !is_string($responseBody) || $responseBody === '' || $httpCode < 200 || $httpCode >= 300) {
+        return $fallback;
+    }
+
+    $outer = json_decode($responseBody, true);
+    if (!is_array($outer)) {
+        return $fallback;
+    }
+
+    $text = $outer['candidates'][0]['content']['parts'][0]['text'] ?? null;
+    if (!is_string($text)) {
+        return $fallback;
+    }
+
+    $text = trim($text);
+    if ($text === '') {
+        return $fallback;
+    }
+
+    if (mb_strlen($text, 'UTF-8') > 1200) {
+        $text = mb_substr($text, 0, 1200, 'UTF-8');
+    }
+
+    return $text;
+}

@@ -1271,6 +1271,12 @@ a:focus-visible {
   color: #991b1b;
 }
 
+.banner.mail-info {
+  background: rgba(147, 51, 234, 0.12);
+  border: 1px solid rgba(147, 51, 234, 0.38);
+  color: #6b21a8;
+}
+
 .form-group {
   margin-bottom: 16px;
 }
